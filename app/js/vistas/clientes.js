@@ -109,7 +109,7 @@ export async function renderFicha(v, id) {
       <div class="entre"><span>Pendiente de cobro</span><b class="precio" style="color:${Number(c.saldo) > 0 ? 'var(--e-pendiente)' : 'var(--e-realizado)'}">${pesos(c.saldo)}</b></div>
       ${deuda.map(x => `<div class="entre peq" style="border-top:1px solid #eeece4;padding-top:6px;margin-top:6px">
           <span>${esc(x.concepto)} · ${ddmm(x.fecha)}${Number(x.cobrado) > 0 ? ` <span class="mut">(pagó ${pesos(x.cobrado)})</span>` : ''}</span>
-          <span class="fila"><b class="monto">${pesos(x.saldo)}</b><button class="btn chico" data-cobrar="${x.id}">Cobrar</button></span></div>`).join('')}
+          <span class="fila"><b class="monto">${pesos(x.saldo)}</b><button class="btn-texto" data-ajustar="${x.id}">Ajustar</button><button class="btn chico" data-cobrar="${x.id}">Cobrar</button></span></div>`).join('')}
       ${c.pagos.length ? `<details style="margin-top:10px"><summary class="peq" style="cursor:pointer;font-weight:700">Cobros registrados (${c.pagos.length})</summary>
         ${c.pagos.map(p => `<div class="entre peq" style="padding:6px 0;border-bottom:1px solid #eeece4"><span>${ddmmaa(p.fecha)} · ${METODOS[p.metodo]}${p.nota ? ` · ${esc(p.nota)}` : ''}</span>
           <span class="fila"><b class="monto">${pesos(p.monto)}</b><button class="btn-texto" style="color:var(--peligro)" data-anular="${p.id}">Anular</button></span></div>`).join('')}</details>` : ''}
@@ -142,11 +142,32 @@ export async function renderFicha(v, id) {
   v.querySelectorAll('[data-editar-srv]').forEach(b => b.onclick = () => formServicio(c, c.servicios.find(s => s.id === b.dataset.editarSrv)));
   v.querySelectorAll('[data-cobrar]').forEach(b => b.onclick = () => abrirCobro([c.cargos.find(x => x.id === b.dataset.cobrar)], c.nombre));
   v.querySelector('[data-cobrar-todo]')?.addEventListener('click', () => abrirCobro(deuda, c.nombre));
+  v.querySelectorAll('[data-ajustar]').forEach(b => b.onclick = () => ajustarCargo(c.cargos.find(x => x.id === b.dataset.ajustar)));
   v.querySelectorAll('[data-anular]').forEach(b => b.onclick = async () => {
     if (!await confirmar('¿Anular este cobro? El importe vuelve a quedar pendiente.', { ok: 'Anular cobro', peligro: true })) return;
     hacer(() => rpc('anular_pago', { p_pago: b.dataset.anular }), { ok: 'Cobro anulado' }).catch(() => {});
   });
   v.querySelectorAll('[data-estado]').forEach(b => b.onclick = () => cambiarEstado(c, b.dataset.estado));
+}
+
+// Ajuste manual de lo facturado (ej.: abono de un mes con un corte cancelado).
+function ajustarCargo(x) {
+  abrirHoja({
+    titulo: 'Ajustar importe',
+    cuerpo: `<p style="margin-top:0"><b>${esc(x.concepto)}</b> · ${ddmmaa(x.fecha)}</p>
+      <label class="campo"><span>Importe a cobrar ($)</span><input type="number" inputmode="numeric" min="${Number(x.cobrado)}" step="500" value="${Number(x.monto)}" data-monto autofocus>
+        <small>Ya cobrado: ${pesos(x.cobrado)}. No puede quedar por debajo de eso.</small></label>
+      <label class="campo"><span>Motivo del ajuste</span><input type="text" data-nota placeholder="Ej: se canceló un corte por lluvia"></label>`,
+    pie: `<button class="btn" data-no>Volver</button><button class="btn prim" data-si>Guardar</button>`,
+    alAbrir: h => {
+      h.$('[data-no]').onclick = h.cerrar;
+      h.$('[data-si]').onclick = async () => {
+        const m = h.$('[data-monto]').value;
+        if (m === '' || Number(m) < Number(x.cobrado)) return h.$('[data-monto]').classList.add('error-campo');
+        try { await hacer(() => rpc('editar_cargo', { p_cargo: x.id, p_monto: Number(m), p_nota: h.$('[data-nota]').value || null }), { ok: 'Importe ajustado' }); h.cerrar(); } catch {}
+      };
+    }
+  });
 }
 
 function cambiarEstado(c, nuevo) {
