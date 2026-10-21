@@ -1,0 +1,159 @@
+<!doctype html>
+<html lang="es"><head><meta charset="utf-8"><title>Pruebas Parques Norte</title></head>
+<body><pre id="out">corriendo…</pre>
+<script>window.PN_CONFIG = { modo: 'local' };</script>
+<script type="module">
+import { iniciar, rpc } from './js/db.js';
+const out = [];
+let fallas = 0;
+const ok = (cond, msg) => { out.push((cond ? 'OK   ' : 'FALLA') + ' ' + msg); if (!cond) fallas++; };
+const debeFallar = async (p, msg) => { try { await p; ok(false, msg + ' (no falló)'); } catch (e) { ok(true, msg + ' → ' + e.message); } };
+try {
+  const t0 = performance.now();
+  await iniciar({ memoria: true, demo: true });
+  out.push(`base lista en ${Math.round(performance.now() - t0)} ms`);
+  const cfg = await rpc('api_config');
+  ok(cfg.jardineros.length === 3, 'jardineros iniciales: ' + cfg.jardineros.map(j => j.nombre).join(', '));
+  const corte = cfg.tipos_servicio.find(t => t.codigo === 'corte_simple');
+  const mant = cfg.tipos_servicio.find(t => t.codigo === 'mantenimiento');
+  const cant = cfg.tipos_servicio.find(t => t.codigo === 'canteros');
+  ok(corte.tarifas.comun == 45000 && corte.tarifas.esquina == 50000, 'tarifas corte');
+  ok(mant.tarifas.comun == 80000 && mant.tarifas.esquina == 90000, 'tarifas mantenimiento');
+  ok(cant.tarifas.unica == 15000, 'tarifa canteros');
+  const gen = await rpc('generar_trabajos');
+  out.push('generar_trabajos: ' + JSON.stringify(gen));
+  const ini = await rpc('api_inicio');
+  out.push('hoy ' + ini.hoy + ': ' + ini.trabajos.length + ' trabajos; semana ' + JSON.stringify(ini.semana) + '; mes ' + JSON.stringify(ini.mes));
+  out.push('alertas: sin asignar ' + ini.alertas.sin_asignar.length + ', atrasados ' + ini.alertas.atrasados.length + ', próximos ' + ini.alertas.proximos.length + ', sin próxima ' + ini.alertas.sin_proxima.length + ', saldo ' + ini.alertas.saldo_pendiente);
+  const clientes = await rpc('api_clientes', {});
+  ok(clientes.length === 8, 'clientes demo: ' + clientes.length);
+  ok((await rpc('api_clientes', { p_buscar: '0104' })).length === 1, 'búsqueda por teléfono');
+  ok((await rpc('api_clientes', { p_buscar: 'escobar' })).length === 2, 'búsqueda por dirección');
+
+  // cliente nuevo + servicio
+  const pope = cfg.jardineros.find(j => j.nombre === 'Pope').id;
+  const pablo = cfg.jardineros.find(j => j.nombre === 'Pabloski').id;
+  const cid = await rpc('guardar_cliente', { p: { nombre: 'Juan Prueba', direccion: 'Calle 1', tipo_propiedad: 'esquina', whatsapp: '11 4444-0000' } });
+  const s = await rpc('guardar_servicio', { p: { cliente_id: cid, tipo_servicio_id: corte.id, frecuencia: 'semanal', fecha_inicio: ini.hoy } });
+  ok(s.generados >= 8, 'servicio semanal generó ' + s.generados + ' trabajos');
+  let ficha = await rpc('api_cliente', { p_id: cid });
+  ok(ficha.servicios[0].precio_vigente == 50000, 'precio esquina 50000');
+  const futuros = ficha.trabajos.slice().reverse();
+  const t1 = futuros[0];
+  ok(t1.fecha === ini.hoy && t1.precio == 50000, 'primer trabajo hoy con precio 50000');
+
+  // asignar + realizado + cargo
+  let tj = await rpc('asignar_jardineros', { p_trabajo: t1.id, p_jardineros: [pope, pablo] });
+  ok(tj.estado === 'asignado' && tj.jardineros.length === 2, 'asignado a 2 jardineros');
+  tj = await rpc('marcar_realizado', { p_trabajo: t1.id });
+  ok(tj.estado === 'realizado' && tj.cobro && tj.cobro.monto == 50000, 'realizado con cargo 50000');
+  await debeFallar(rpc('cancelar_trabajo', { p_trabajo: t1.id, p_motivo: 'x' }), 'no se cancela un realizado');
+
+  // reprogramar
+  const t2 = futuros[1];
+  await debeFallar(rpc('reprogramar_trabajo', { p_trabajo: t2.id, p_nueva_fecha: t2.fecha, p_motivo: '  ' }), 'reprogramar sin motivo');
+  await debeFallar(rpc('reprogramar_trabajo', { p_trabajo: t2.id, p_nueva_fecha: null, p_motivo: 'Lluvia' }), 'reprogramar sin fecha');
+  const d2 = new Date(t2.fecha + 'T12:00:00'); d2.setDate(d2.getDate() + 2);
+  const nf = d2.toISOString().slice(0, 10);
+  const rep = await rpc('reprogramar_trabajo', { p_trabajo: t2.id, p_nueva_fecha: nf, p_motivo: 'Lluvia intensa', p_observaciones: 'Barro' });
+  const viejo = await rpc('api_trabajo', { p_id: t2.id });
+  ok(viejo.estado === 'reprogramado' && viejo.reprogramado_a === nf && viejo.historial.some(h => h.tipo === 'reprogramado' && h.motivo === 'Lluvia intensa'), 'original queda REPROGRAMADO con motivo');
+  const nuevo = await rpc('api_trabajo', { p_id: rep.id });
+  ok(nuevo.fecha === nf && nuevo.fecha_original === t2.fecha && nuevo.cadena.length === 1, 'nuevo trabajo en ' + nf + ' con fecha original');
+  ficha = await rpc('api_cliente', { p_id: cid });
+  const semanales = ficha.trabajos.filter(t => t.estado !== 'reprogramado' && t.estado !== 'realizado').map(t => t.fecha).sort();
+  ok(semanales.includes(futuros[2].fecha), 'la recurrencia sigue igual (solo ese trabajo)');
+
+  // reprogramar con "los siguientes"
+  const t3 = futuros[2];
+  const d3 = new Date(t3.fecha + 'T12:00:00'); d3.setDate(d3.getDate() + 1);
+  const nf3 = d3.toISOString().slice(0, 10);
+  const rep3 = await rpc('reprogramar_trabajo', { p_trabajo: t3.id, p_nueva_fecha: nf3, p_motivo: 'Cliente pidió cambiar día', p_siguientes: true });
+  out.push('reprogramar siguientes: ' + JSON.stringify({ borrados: rep3.borrados, conservados: rep3.conservados, generados: rep3.generados }));
+  ficha = await rpc('api_cliente', { p_id: cid });
+  const abiertos = ficha.trabajos.filter(t => ['pendiente', 'asignado'].includes(t.estado)).map(t => t.fecha).sort();
+  const d4 = new Date(nf3 + 'T12:00:00'); d4.setDate(d4.getDate() + 7);
+  ok(abiertos.includes(d4.toISOString().slice(0, 10)) && !abiertos.includes(futuros[3].fecha), 'siguientes corridos: ' + abiertos.slice(0, 4).join(' '));
+
+  // cancelar
+  const t5 = ficha.trabajos.filter(t => t.estado === 'asignado' || t.estado === 'pendiente').at(-1);
+  await debeFallar(rpc('cancelar_trabajo', { p_trabajo: t5.id, p_motivo: '' }), 'cancelar sin motivo');
+  tj = await rpc('cancelar_trabajo', { p_trabajo: t5.id, p_motivo: 'Cliente pidió cancelar' });
+  ok(tj.estado === 'cancelado' && tj.motivo_cancelacion === 'Cliente pidió cancelar', 'cancelado con motivo');
+
+  // tarifas: cambio no toca lo realizado, sí lo pendiente
+  await rpc('cambiar_tarifa', { p_tipo: corte.id, p_propiedad: 'esquina', p_monto: 55000 });
+  ficha = await rpc('api_cliente', { p_id: cid });
+  ok(ficha.trabajos.find(t => t.id === t1.id).precio == 50000, 'realizado conserva 50000');
+  ok(ficha.trabajos.filter(t => ['pendiente', 'asignado'].includes(t.estado)).every(t => t.precio == 55000), 'pendientes pasan a 55000');
+  // precio personalizado prevalece
+  await rpc('guardar_servicio', { p: { ...ficha.servicios[0], precio_personalizado: 47000, dias_mes: null } });
+  ficha = await rpc('api_cliente', { p_id: cid });
+  ok(ficha.servicios[0].precio_vigente == 47000 && ficha.trabajos.filter(t => ['pendiente', 'asignado'].includes(t.estado)).every(t => t.precio == 47000), 'precio personalizado 47000');
+
+  // cobros
+  const cargo = ficha.cargos.find(c => c.trabajo_id === t1.id);
+  await debeFallar(rpc('registrar_pago', { p_cargos: [cargo.id], p_metodo: 'bitcoin' }), 'método inválido');
+  await rpc('registrar_pago', { p_cargos: [cargo.id], p_metodo: 'efectivo', p_monto: 20000 });
+  ficha = await rpc('api_cliente', { p_id: cid });
+  ok(ficha.cargos.find(c => c.id === cargo.id).saldo == 30000, 'cobro parcial deja saldo 30000');
+  await debeFallar(rpc('deshacer_realizado', { p_trabajo: t1.id }), 'no se deshace realizado con cobros');
+
+  // canteros por bloques
+  const tc = await rpc('crear_trabajo', { p: { cliente_id: cid, tipo_servicio_id: cant.id, fecha: ini.hoy, bloques: 1 } });
+  const tcr = await rpc('marcar_realizado', { p_trabajo: tc.id, p_bloques: 2 });
+  ok(tcr.precio == 30000 && tcr.bloques == 2, 'canteros 2 bloques = 30000');
+
+  // abono mensual: un cargo por mes, los cortes van en 0
+  const cid2 = await rpc('guardar_cliente', { p: { nombre: 'Abono Prueba', tipo_propiedad: 'comun' } });
+  await rpc('guardar_servicio', { p: { cliente_id: cid2, tipo_servicio_id: mant.id, frecuencia: 'dos_por_mes', fecha_inicio: ini.hoy } });
+  let f2 = await rpc('api_cliente', { p_id: cid2 });
+  ok(f2.cargos.length === 1 && f2.cargos[0].monto == 80000, 'abono: un cargo mensual de 80000');
+  ok(f2.trabajos.every(t => t.precio == 0), 'abono: los cortes no suman precio aparte');
+  ok(JSON.stringify(f2.servicios[0].dias_mes) !== 'null', 'abono dos por mes en días ' + JSON.stringify(f2.servicios[0].dias_mes));
+
+  // pausar cliente
+  const pa = await rpc('cambiar_estado_cliente', { p_cliente: cid2, p_estado: 'pausado' });
+  f2 = await rpc('api_cliente', { p_id: cid2 });
+  ok(!f2.trabajos.some(t => t.fecha > ini.hoy && ['pendiente', 'asignado'].includes(t.estado)), 'pausado: sin trabajos futuros (' + JSON.stringify(pa) + ')');
+  await rpc('cambiar_estado_cliente', { p_cliente: cid2, p_estado: 'activo' });
+  f2 = await rpc('api_cliente', { p_id: cid2 });
+  ok(f2.trabajos.some(t => t.fecha > ini.hoy), 'reactivado: vuelven los trabajos');
+
+  // desactivar jardinero
+  const chancho = cfg.jardineros.find(j => j.nombre === 'Chancho');
+  await rpc('guardar_jardinero', { p: { ...chancho, activo: false } });
+  const est = await rpc('api_estadisticas', { p_desde: '2026-01-01', p_hasta: '2026-12-31' });
+  ok(est.por_jardinero.some(j => j.nombre === 'Chancho' && j.realizados > 0), 'Chancho inactivo conserva sus trabajos en estadísticas');
+  const prox = await rpc('api_trabajos', { p_desde: ini.hoy, p_hasta: '2027-12-31', p_filtros: { jardinero_id: chancho.id } });
+  ok(prox.filter(t => t.fecha > ini.hoy && ['pendiente', 'asignado'].includes(t.estado)).length === 0, 'Chancho sale de trabajos futuros');
+  await rpc('guardar_jardinero', { p: { ...chancho, activo: true } });
+
+  // varios jardineros: la facturación no se duplica
+  const suma = est.por_jardinero.reduce((a, j) => a + Number(j.participacion), 0);
+  out.push('estadísticas: ' + JSON.stringify({ trabajos: est.trabajos, dinero: est.dinero, recurrente: est.recurrente, adicionales: est.adicionales }));
+  out.push('por jardinero: ' + est.por_jardinero.map(j => `${j.nombre} ${j.realizados} (compartidos ${j.compartidos}) $${j.participacion}`).join(' | '));
+  const facturadoTrabajos = est.por_servicio.filter(s => s.modo_cobro !== 'abono_mensual').reduce((a, s) => a + Number(s.facturado), 0);
+  ok(suma <= facturadoTrabajos && suma > 0, `participación repartida ${suma} no supera lo facturado por visita ${facturadoTrabajos} (diferencia = trabajos sin jardinero)`);
+
+  // reprogramar día por lluvia
+  const manana = new Date(ini.hoy + 'T12:00:00'); manana.setDate(manana.getDate() + 1);
+  const rd = await rpc('reprogramar_dia', { p_fecha: ini.hoy, p_nueva_fecha: manana.toISOString().slice(0, 10), p_motivo: 'Lluvia' });
+  ok(rd.reprogramados >= 1, 'lluvia: reprogramados ' + rd.reprogramados + ' trabajos de hoy');
+
+  // exportar / importar
+  const dump = await rpc('api_exportar');
+  const imp = await rpc('api_importar', { p: dump });
+  ok(imp.trabajos === dump.trabajos.length, 'exportar/importar ida y vuelta: ' + JSON.stringify(imp));
+  const demo = await rpc('borrar_demo');
+  ok(demo.clientes_borrados === 8, 'borrar demo: ' + JSON.stringify(demo));
+  await rpc('api_cobros', {});
+} catch (e) {
+  out.push('ERROR: ' + e.message + '\n' + e.stack);
+  fallas++;
+}
+out.push(fallas ? `\n${fallas} FALLAS` : '\nTODO OK');
+document.getElementById('out').textContent = out.join('\n');
+document.title = fallas ? 'FALLAS' : 'TODO OK';
+</script>
+</body></html>
