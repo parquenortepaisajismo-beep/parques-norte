@@ -1317,3 +1317,11 @@ select id, p, m, date '2026-01-01', 'Inicial' from parques.tipos_servicio ts
 join (values ('corte_simple','comun',45000), ('corte_simple','esquina',50000),
              ('mantenimiento','comun',80000), ('mantenimiento','esquina',90000),
              ('canteros',null,15000)) v(cod, p, m) on v.cod = ts.codigo;
+
+-- ---------- ruta de búsqueda fija en todas las funciones (recomendación de seguridad) ----------
+do $$ declare f record; begin
+  for f in select p.oid::regprocedure as sig from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+           where n.nspname = 'parques' and p.proconfig is null loop
+    execute format('alter function %s set search_path = parques, public', f.sig);
+  end loop;
+end $$;

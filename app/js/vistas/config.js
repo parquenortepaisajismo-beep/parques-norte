@@ -1,5 +1,5 @@
 // Configuración: tarifas, servicios, jardineros, preferencias, datos.
-import { rpc, json, modo, salir, borrarBaseLocal } from '../db.js';
+import { rpc, json, modo, salir, borrarBaseLocal, cambiarClave } from '../db.js';
 import { esc, pesos, ddmmaa, hoyISO, MODOS, FRECUENCIAS, ICONOS } from '../util.js';
 import { estado, cargarConfig, tipos, jardineros, abrirHoja, hacer, confirmar, exigir, toast, cfg } from '../ui.js';
 import { form as formJardinero } from './equipo.js';
@@ -64,7 +64,7 @@ export async function render(v) {
       </div>
       ${c.hay_demo ? `<button class="btn borde-peligro bloque" style="margin-top:10px" data-demo>Borrar clientes de demostración</button>` : ''}
       ${modo() === 'local' ? `<button class="btn-texto" style="margin-top:10px;color:var(--peligro)" data-reset>Empezar de cero (borra toda la base de este dispositivo)</button>` : ''}
-      ${modo() === 'supabase' ? `<button class="btn bloque" style="margin-top:10px" data-salir>Cerrar sesión</button>` : ''}
+      ${modo() === 'supabase' ? `<div class="grilla dos" style="margin-top:10px"><button class="btn" data-clave>Cambiar contraseña</button><button class="btn" data-salir>Cerrar sesión</button></div>` : ''}
     </div>
     <p class="muy-peq mut" style="text-align:center;margin-top:20px">Parques Norte · v1</p>`;
 
@@ -126,6 +126,21 @@ export async function render(v) {
     await borrarBaseLocal(); location.reload();
   });
   v.querySelector('[data-salir]')?.addEventListener('click', async () => { await salir(); location.reload(); });
+  v.querySelector('[data-clave]')?.addEventListener('click', () => abrirHoja({
+    titulo: 'Cambiar contraseña',
+    cuerpo: `<label class="campo"><span>Contraseña nueva <em>*</em></span><input type="password" data-c1 autocomplete="new-password" minlength="8" autofocus><small>Mínimo 8 caracteres.</small></label>
+      <label class="campo"><span>Repetila <em>*</em></span><input type="password" data-c2 autocomplete="new-password"></label>`,
+    pie: `<button class="btn" data-no>Volver</button><button class="btn prim" data-si>Guardar</button>`,
+    alAbrir: h => {
+      h.$('[data-no]').onclick = h.cerrar;
+      h.$('[data-si]').onclick = async () => {
+        const c1 = h.$('[data-c1]').value, c2 = h.$('[data-c2]').value;
+        if (c1.length < 8) return toast('La contraseña debe tener al menos 8 caracteres', { error: true });
+        if (c1 !== c2) return toast('Las dos contraseñas no coinciden', { error: true });
+        try { await cambiarClave(c1); toast('Contraseña cambiada'); h.cerrar(); } catch (e) { toast(e.message, { error: true }); }
+      };
+    }
+  }));
 }
 
 function formTipo(t) {

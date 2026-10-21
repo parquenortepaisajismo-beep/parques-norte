@@ -1,6 +1,6 @@
 // Service worker: la app abre sin conexión (en modo local funciona completa offline).
 // Subir VERSION en cada publicación.
-const VERSION = 'pn-v2';
+const VERSION = 'pn-v3';
 const APP = ['./', 'index.html', 'config.js', 'css/app.css', 'js/app.js', 'js/db.js', 'js/ui.js', 'js/util.js',
   'js/vistas/inicio.js', 'js/vistas/agenda.js', 'js/vistas/clientes.js', 'js/vistas/equipo.js', 'js/vistas/estadisticas.js',
   'js/vistas/config.js', 'sql/000_local_auth.sql', 'sql/001_esquema.sql', 'sql/local_perfil.sql', 'sql/demo.sql',

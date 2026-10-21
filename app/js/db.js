@@ -90,6 +90,10 @@ export async function entrar(email, password) {
   if (error) throw new Error(error.message === 'Invalid login credentials' ? 'Mail o contraseña incorrectos' : error.message);
 }
 export async function salir() { if (sb) await sb.auth.signOut(); }
+export async function cambiarClave(password) {
+  const { error } = await sb.auth.updateUser({ password });
+  if (error) throw new Error(/should be different/i.test(error.message) ? 'La contraseña nueva es igual a la actual' : error.message);
+}
 
 // ---------- utilidades de la base local ----------
 export async function borrarBaseLocal() {

@@ -1,7 +1,12 @@
 # Parques Norte · cómo mudar la app a sus cuentas propias
 
-Hoy la app funciona en **modo local**: los datos viven en el navegador de cada dispositivo.
-Para que todos (celu, compu, el equipo) vean los mismos datos hay que pasarla a Supabase.
+> **Estado (21/10/2026): mudanza hecha.** Cuenta parquenortepaisajismo@gmail.com.
+> GitHub `parquenortepaisajismo-beep/parques-norte` → https://parquenortepaisajismo-beep.github.io/parques-norte/
+> Supabase: proyecto "Parques Norte" (`pwemsreanpeiieegtyca`, sa-east-1), esquema `parques`, registros públicos desactivados.
+> Para correr SQL: `tools/sql.sh archivo.sql` (necesita `supabase-token.txt`, que no se sube a git).
+> Lo de abajo queda como referencia por si hay que repetirla.
+
+Antes la app funcionaba en **modo local** (datos en el navegador de cada dispositivo).
 
 ## 1. Supabase (base de datos en la nube)
 
